@@ -29,7 +29,19 @@ jobs:
 
       - name: Pin minigraf version in Cargo.toml
         run: |
-          sed -i 's/^minigraf = "[^"]*"/minigraf = "${{ steps.ver.outputs.semver }}"/' Cargo.toml
+          sed -i 's/^minigraf = "[^"]*"/minigraf = "=${{ steps.ver.outputs.semver }}"/' Cargo.toml
+
+      - name: Wait for minigraf to appear on crates.io sparse index
+        run: |
+          SEMVER="${{ steps.ver.outputs.semver }}"
+          for i in $(seq 1 10); do
+            if cargo search minigraf --limit 1 2>/dev/null | grep -q "minigraf = \"$SEMVER\""; then
+              echo "minigraf $SEMVER found on crates.io (attempt $i)"
+              break
+            fi
+            echo "Attempt $i/10: not yet visible, waiting 15s..."
+            sleep 15
+          done
 
       - name: Update Cargo.lock
         run: cargo update --precise "${{ steps.ver.outputs.semver }}" minigraf
@@ -83,14 +95,11 @@ jobs:
             --language kotlin \
             --out-dir android/src/main/java/
 
-      - name: Assemble AAR
-        run: cd android && ./gradlew assembleRelease
-
-      - name: Publish to Maven Central
+      - name: Assemble and publish to Maven Central
         env:
           CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
           CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
           GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.semver }}
-        run: cd android && ./gradlew publishAllPublicationsToCentralPortal
+        run: cd android && ./gradlew assembleRelease publishAllPublicationsToCentralPortal
