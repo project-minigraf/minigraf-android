@@ -1,0 +1,96 @@
+name: Android Release
+
+on:
+  repository_dispatch:
+    types: [core-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.2.0)'
+        required: true
+
+jobs:
+  prepare:
+    name: Pin version, commit, tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
+      semver: ${{ steps.ver.outputs.semver }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.MINIGRAF_RELEASE_TOKEN }}
+
+      - id: ver
+        run: |
+          V="${{ github.event.client_payload.version || github.event.inputs.version }}"
+          echo "tag=$V" >> "$GITHUB_OUTPUT"
+          echo "semver=${V#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Pin minigraf version in Cargo.toml
+        run: |
+          sed -i 's/^minigraf = "[^"]*"/minigraf = "${{ steps.ver.outputs.semver }}"/' Cargo.toml
+
+      - name: Update Cargo.lock
+        run: cargo update --precise "${{ steps.ver.outputs.semver }}" minigraf
+
+      - name: Commit and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore: release ${{ steps.ver.outputs.tag }}"
+          git tag "${{ steps.ver.outputs.tag }}"
+          git push origin main --follow-tags
+
+  build-and-publish:
+    name: Build AAR and publish to Maven Central
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Set ANDROID_NDK_HOME
+        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cross-compile Android targets
+        run: |
+          cargo ndk \
+            -t arm64-v8a \
+            -t armeabi-v7a \
+            -t x86_64 \
+            -o android/jniLibs \
+            build --release
+
+      - name: Generate Kotlin bindings
+        run: |
+          cargo run --bin uniffi-bindgen -- generate \
+            --library target/aarch64-linux-android/release/libminigraf_ffi.so \
+            --language kotlin \
+            --out-dir android/src/main/java/
+
+      - name: Assemble AAR
+        run: cd android && ./gradlew assembleRelease
+
+      - name: Publish to Maven Central
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.semver }}
+        run: cd android && ./gradlew publishAllPublicationsToCentralPortal
