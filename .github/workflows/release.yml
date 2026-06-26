@@ -31,18 +31,23 @@ jobs:
         run: |
           sed -i 's/^minigraf = "[^"]*"/minigraf = "=${{ steps.ver.outputs.semver }}"/' Cargo.toml
 
-      - name: Wait for minigraf to appear on crates.io sparse index
+      - name: Wait for minigraf ${{ steps.ver.outputs.semver }} on crates.io
         run: |
           SEMVER="${{ steps.ver.outputs.semver }}"
-          for i in $(seq 1 10); do
-            if cargo search minigraf --limit 1 2>/dev/null | grep -q "minigraf = \"$SEMVER\""; then
-              echo "minigraf $SEMVER found on crates.io (attempt $i)"
-              break
+          echo "Waiting for minigraf@$SEMVER on crates.io..."
+          for i in $(seq 1 20); do
+            STATUS=$(curl -s "https://crates.io/api/v1/crates/minigraf/$SEMVER" \
+              -H "User-Agent: minigraf-binding/1.0" | python3 -c \
+              "import sys,json; d=json.load(sys.stdin); print(d.get('version',{}).get('num',''))" 2>/dev/null || echo "")
+            if [ "$STATUS" = "$SEMVER" ]; then
+              echo "minigraf@$SEMVER is live (attempt $i)"
+              exit 0
             fi
-            echo "Attempt $i/10: not yet visible, waiting 15s..."
+            echo "Attempt $i/20: not yet available, waiting 15s..."
             sleep 15
           done
-
+          echo "ERROR: minigraf@$SEMVER not found on crates.io after 5 minutes" >&2
+          exit 1
       - name: Update Cargo.lock
         run: cargo update --precise "${{ steps.ver.outputs.semver }}" minigraf
 
@@ -103,3 +108,4 @@ jobs:
           GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.semver }}
         run: cd android && ./gradlew assembleRelease publishAllPublicationsToCentralPortal
+
