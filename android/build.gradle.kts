@@ -66,12 +66,12 @@ afterEvaluate {
             sign(publishing.publications["release"])
         }
     }
-}
 
-nmcp {
-    publish("release") {
-        username = System.getenv("CENTRAL_TOKEN_USERNAME") ?: ""
-        password = System.getenv("CENTRAL_TOKEN_PASSWORD") ?: ""
-        publicationType = "AUTOMATIC"
+    nmcp {
+        publish("release") {
+            username = System.getenv("CENTRAL_TOKEN_USERNAME") ?: ""
+            password = System.getenv("CENTRAL_TOKEN_PASSWORD") ?: ""
+            publicationType = "AUTOMATIC"
+        }
     }
 }
