@@ -63,3 +63,13 @@ jobs:
 
       - name: Assemble AAR
         run: cd android && ./gradlew assembleRelease
+
+      # nmcp names the Maven Central deployment "<project.name>-<project.version>.zip",
+      # so project.version (not just the publication version) must carry RELEASE_VERSION.
+      - name: Check project version follows RELEASE_VERSION
+        env:
+          RELEASE_VERSION: 0.0.0-ci
+        run: |
+          cd android
+          ./gradlew -q properties | tee props.txt | grep -x 'version: 0.0.0-ci' \
+            || { grep '^version:' props.txt; echo "::error::project.version does not follow RELEASE_VERSION"; exit 1; }
