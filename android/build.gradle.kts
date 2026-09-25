@@ -5,6 +5,11 @@ plugins {
     id("com.gradleup.nmcp") version "0.0.8"
 }
 
+// Set on the project (not only the publication): nmcp names the Central Portal
+// deployment bundle "${project.name}-${project.version}.zip".
+group = "io.github.project-minigraf"
+version = System.getenv("RELEASE_VERSION") ?: "0.0.0-local"
+
 android {
     namespace = "io.github.project_minigraf.minigraf"
     compileSdk = 34
@@ -28,9 +33,9 @@ afterEvaluate {
         publications {
             create<MavenPublication>("release") {
                 from(components["release"])
-                groupId = "io.github.project-minigraf"
+                groupId = project.group.toString()
                 artifactId = "minigraf-android"
-                version = System.getenv("RELEASE_VERSION") ?: "0.0.0-local"
+                version = project.version.toString()
 
                 pom {
                     name.set("Minigraf Android")
