@@ -57,7 +57,8 @@ UniFFI objects are `AutoCloseable`: `close()` (or `use`) frees the native object
 shim's own close methods are named `release()` (cursor, fact log) and `abandon()` (log
 writer) here, because `close()` is taken. A record's value is a `MiniGrafValue`
 (`Text`, `Int64`, `Float64`, `Bool`, `Ref`, `Keyword`, `Null`); a `validTo` of
-`Long.MAX_VALUE` means forever. Error messages start with their code, such as `[API-015]`.
+`Long.MAX_VALUE` means forever. `walCheckpointThreshold = Long.MAX_VALUE` turns off automatic
+checkpoints and the checkpoint on close. Error messages start with their code, such as `[API-015]`.
 
 ## Building from source
 
