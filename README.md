@@ -23,6 +23,42 @@ val result = db.execute("""(transact [[:alice :name "Alice"]])""")
 println(result)  // {"transacted":1}
 ```
 
+## Open options, cursors, the fact log and the log writer
+
+```kotlin
+import uniffi.minigraf_ffi.*
+
+// Read-only: shared lock, nothing written; writes throw MiniGrafException (API-014).
+val src = MiniGrafDb.openWithOptions(path, OpenOptions(readOnly = true, pageCacheSize = 4096))
+
+// A cursor's answer is fixed when it opens. Each batch is a JSON array of rows,
+// encoded like execute()'s "results"; null at the end.
+src.query("(query [:find ?n :where [?e :name ?n]])").use { cursor ->
+    while (true) {
+        val batch = cursor.nextBatch(1000) ?: break
+        // parse batch
+    }
+}
+
+// Copy every fact version, keeping tx and valid-time bounds, into a new file.
+MiniGrafLogWriter.create(newPath, OpenOptions()).use { out ->
+    src.factLog(FactFilter()).use { log ->
+        while (true) {
+            val records = log.nextBatch(1000) ?: break
+            out.appendBatch(records.filter { !it.attribute.startsWith(":secret/") })
+        }
+    }
+    out.advanceTxCount(src.currentTxCount())
+    out.finish()
+}   // closing without finish() abandons the build and leaves no file
+```
+
+UniFFI objects are `AutoCloseable`: `close()` (or `use`) frees the native object. The
+shim's own close methods are named `release()` (cursor, fact log) and `abandon()` (log
+writer) here, because `close()` is taken. A record's value is a `MiniGrafValue`
+(`Text`, `Int64`, `Float64`, `Bool`, `Ref`, `Keyword`, `Null`); a `validTo` of
+`Long.MAX_VALUE` means forever. Error messages start with their code, such as `[API-015]`.
+
 ## Building from source
 
 Requires Rust stable toolchain, Android NDK, and JDK 17.

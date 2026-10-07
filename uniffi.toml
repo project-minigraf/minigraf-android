@@ -1,0 +1,7 @@
+# UniFFI objects are AutoCloseable in Kotlin: close() frees the Rust object, which
+# releases a cursor or fact log and abandons an unfinished log writer. The shim's
+# own close() methods would clash with it, so they get other names here.
+[bindings.kotlin.rename]
+"MiniGrafCursor.close" = "release"
+"MiniGrafFactLog.close" = "release"
+"MiniGrafLogWriter.close" = "abandon"
