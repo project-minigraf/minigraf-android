@@ -1,5 +1,8 @@
 plugins {
     id("com.android.library") version "8.2.2"
+    // The UniFFI bindings are Kotlin; without this plugin they are never
+    // compiled and the AAR ships an empty classes.jar.
+    id("org.jetbrains.kotlin.android") version "2.0.21"
     id("maven-publish")
     signing
     id("com.gradleup.nmcp") version "0.0.8"
@@ -23,13 +26,33 @@ android {
             java.srcDirs("src/main/java")
         }
     }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
     publishing {
         singleVariant("release")
     }
 }
 
+dependencies {
+    // The generated bindings call into the native library through JNA.
+    // `api`, so the dependency is in the published pom and module metadata.
+    api("net.java.dev.jna:jna:5.14.0@aar")
+}
+
 afterEvaluate {
     publishing {
+        // build/m2: the layout CI tests and the release compares against.
+        repositories {
+            maven {
+                name = "dist"
+                url = uri(layout.buildDirectory.dir("m2"))
+            }
+        }
         publications {
             create<MavenPublication>("release") {
                 from(components["release"])
