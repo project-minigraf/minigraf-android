@@ -101,10 +101,13 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          cp -r android/build/m2 "$RUNNER_TEMP/first"
+          # The version directory only: maven-metadata.xml one level up holds a
+          # lastUpdated timestamp and is not part of the published artifact.
+          DIR=io/github/project-minigraf/minigraf-android/$RELEASE_VERSION
+          cp -r "android/build/m2/$DIR" "$RUNNER_TEMP/first"
           cd android
           ./gradlew --no-daemon clean publishReleasePublicationToDistRepository
-          diff -r "$RUNNER_TEMP/first" build/m2
+          diff -r "$RUNNER_TEMP/first" "build/m2/$DIR"
 
       - uses: actions/upload-artifact@v4
         with:
