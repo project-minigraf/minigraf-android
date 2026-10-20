@@ -1,3 +1,10 @@
+# The generated Kotlin bindings live in the same package as minigraf-jvm
+# (io.github.project_minigraf.minigraf), not UniFFI's default
+# uniffi.minigraf_ffi, so code moves between the JVM and Android bindings
+# unchanged. Changed in v3.0.0; 2.x used uniffi.minigraf_ffi.
+[bindings.kotlin]
+package_name = "io.github.project_minigraf.minigraf"
+
 # UniFFI objects are AutoCloseable in Kotlin: close() frees the Rust object, which
 # releases a cursor or fact log and abandons an unfinished log writer. The shim's
 # own close() methods would clash with it, so they get other names here.

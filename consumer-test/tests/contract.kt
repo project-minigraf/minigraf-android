@@ -10,8 +10,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
-import uniffi.minigraf_ffi.MiniGrafDb
-import uniffi.minigraf_ffi.MiniGrafException
+import io.github.project_minigraf.minigraf.MiniGrafDb
+import io.github.project_minigraf.minigraf.MiniGrafException
 
 @RunWith(AndroidJUnit4::class)
 class Contract {

@@ -16,17 +16,21 @@ Minimum SDK: 24 (Android 7.0). Supports arm64-v8a, armeabi-v7a, x86_64.
 ## Quick start
 
 ```kotlin
-import uniffi.minigraf_ffi.MiniGrafDb
+import io.github.project_minigraf.minigraf.MiniGrafDb
 
 val db = MiniGrafDb.openInMemory()
 val result = db.execute("""(transact [[:alice :name "Alice"]])""")
 println(result)  // {"transacted":<tx id>}
 ```
 
+From v3.0.0 the classes are in `io.github.project_minigraf.minigraf`, the same package as
+[minigraf-jvm](https://github.com/project-minigraf/minigraf-java). 2.x used `uniffi.minigraf_ffi`;
+upgrading means changing those imports.
+
 ## Open options, cursors, the fact log and the log writer
 
 ```kotlin
-import uniffi.minigraf_ffi.*
+import io.github.project_minigraf.minigraf.*
 
 // Read-only: shared lock, nothing written; writes throw MiniGrafException (API-014).
 val src = MiniGrafDb.openWithOptions(path, OpenOptions(readOnly = true, pageCacheSize = 4096))
