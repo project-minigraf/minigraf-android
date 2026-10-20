@@ -1,0 +1,124 @@
+name: Package
+
+# Builds the AAR exactly as the release publishes it, stamped with `version`,
+# and uploads:
+#   dist-aar         the Maven repository layout (build/m2): AAR, pom, module
+#   dist-aar-inputs  the native libraries and generated Kotlin sources it was
+#                    built from, so the release can rebuild it and check that
+#                    the result is identical to what was tested
+# Unsigned: the release signs when it publishes.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+        default: ''
+      version:
+        required: true
+        type: string
+
+jobs:
+  aar:
+    name: Build AAR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Set ANDROID_NDK_HOME
+        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # Not `cargo ndk -o`: that copies every cdylib in the target directory,
+      # including the core crate's own libminigraf-<hash>.so, into the AAR.
+      - name: Cross-compile Android targets
+        run: |
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 build --release
+          for pair in arm64-v8a:aarch64-linux-android armeabi-v7a:armv7-linux-androideabi x86_64:x86_64-linux-android; do
+            abi="${pair%%:*}"; triple="${pair#*:}"
+            mkdir -p "android/jniLibs/$abi"
+            cp "target/$triple/release/libminigraf_ffi.so" "android/jniLibs/$abi/"
+          done
+          find android/jniLibs -name '*.so' | sort
+
+      - name: Generate Kotlin bindings
+        run: |
+          cargo run --bin uniffi-bindgen -- generate \
+            --library target/aarch64-linux-android/release/libminigraf_ffi.so \
+            --language kotlin \
+            --no-format \
+            --out-dir android/src/main/java/
+
+      - name: Build and publish to build/m2
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: cd android && ./gradlew --no-daemon publishReleasePublicationToDistRepository
+
+      # nmcp names the Maven Central deployment "<project.name>-<project.version>.zip",
+      # so project.version (not just the publication version) must carry RELEASE_VERSION.
+      - name: Check project version follows RELEASE_VERSION
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          cd android
+          ./gradlew -q properties | tee props.txt | grep -x "version: $RELEASE_VERSION" \
+            || { grep '^version:' props.txt; echo "::error::project.version does not follow RELEASE_VERSION"; exit 1; }
+
+      - name: Check the AAR contents
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          DIR=android/build/m2/io/github/project-minigraf/minigraf-android/$VERSION
+          AAR=$DIR/minigraf-android-$VERSION.aar
+          unzip -l "$AAR"
+          unzip -p "$AAR" classes.jar > classes.jar
+          unzip -l classes.jar | grep -q 'uniffi/minigraf_ffi/MiniGrafDb.class' \
+            || { echo "::error::classes.jar has no MiniGrafDb class"; exit 1; }
+          SO=$(unzip -l "$AAR" | awk '{print $4}' | grep '\.so$' | sort)
+          EXPECTED=$(printf 'jni/%s/libminigraf_ffi.so\n' arm64-v8a armeabi-v7a x86_64)
+          [ "$SO" = "$EXPECTED" ] || { echo "::error::unexpected native libraries:"; echo "$SO"; exit 1; }
+          grep -q '<artifactId>jna</artifactId>' "$DIR/minigraf-android-$VERSION.pom" \
+            || { echo "::error::pom does not declare JNA"; exit 1; }
+
+      # The release rebuilds the AAR from dist-aar-inputs, signs it and checks
+      # it is byte-identical to the tested one before publishing. Prove here,
+      # on every PR, that a rebuild from the same inputs is identical.
+      - name: Check the build is reproducible
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          # The version directory only: maven-metadata.xml one level up holds a
+          # lastUpdated timestamp and is not part of the published artifact.
+          DIR=io/github/project-minigraf/minigraf-android/$RELEASE_VERSION
+          cp -r "android/build/m2/$DIR" "$RUNNER_TEMP/first"
+          cd android
+          ./gradlew --no-daemon clean publishReleasePublicationToDistRepository
+          diff -r "$RUNNER_TEMP/first" "build/m2/$DIR"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-aar
+          path: android/build/m2
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-aar-inputs
+          path: |
+            android/jniLibs
+            android/src/main/java
+          if-no-files-found: error

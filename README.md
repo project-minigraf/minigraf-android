@@ -7,7 +7,7 @@ single-file, embedded bi-temporal graph database with Datalog queries.
 
 ```kotlin
 dependencies {
-    implementation("io.github.project-minigraf:minigraf-android:1.2.0")
+    implementation("io.github.project-minigraf:minigraf-android:2.0.8")
 }
 ```
 
@@ -20,7 +20,7 @@ import uniffi.minigraf_ffi.MiniGrafDb
 
 val db = MiniGrafDb.openInMemory()
 val result = db.execute("""(transact [[:alice :name "Alice"]])""")
-println(result)  // {"transacted":1}
+println(result)  // {"transacted":<tx id>}
 ```
 
 ## Building from source
@@ -29,7 +29,11 @@ Requires Rust stable toolchain, Android NDK, and JDK 17.
 
 ```bash
 cargo install cargo-ndk --locked
-cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o android/jniLibs build --release
+cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 build --release
+for pair in arm64-v8a:aarch64-linux-android armeabi-v7a:armv7-linux-androideabi x86_64:x86_64-linux-android; do
+  mkdir -p "android/jniLibs/${pair%%:*}"
+  cp "target/${pair#*:}/release/libminigraf_ffi.so" "android/jniLibs/${pair%%:*}/"
+done
 cargo run --bin uniffi-bindgen -- generate \
   --library target/aarch64-linux-android/release/libminigraf_ffi.so \
   --language kotlin \
