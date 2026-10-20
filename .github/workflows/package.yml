@@ -86,7 +86,7 @@ jobs:
           AAR=$DIR/minigraf-android-$VERSION.aar
           unzip -l "$AAR"
           unzip -p "$AAR" classes.jar > classes.jar
-          unzip -l classes.jar | grep -q 'uniffi/minigraf_ffi/MiniGrafDb.class' \
+          unzip -l classes.jar | grep -q 'io/github/project_minigraf/minigraf/MiniGrafDb.class' \
             || { echo "::error::classes.jar has no MiniGrafDb class"; exit 1; }
           SO=$(unzip -l "$AAR" | awk '{print $4}' | grep '\.so$' | sort)
           EXPECTED=$(printf 'jni/%s/libminigraf_ffi.so\n' arm64-v8a armeabi-v7a x86_64)

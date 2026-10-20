@@ -2,7 +2,7 @@
 // in a test.
 package io.github.project_minigraf.consumer
 
-import uniffi.minigraf_ffi.MiniGrafDb
+import io.github.project_minigraf.minigraf.MiniGrafDb
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertTrue
