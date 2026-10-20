@@ -11,6 +11,11 @@ on:
         required: false
         type: string
         default: ''
+      version:
+        description: 'Version stamped into the artifacts (release.yml passes the release version)'
+        required: false
+        type: string
+        default: '0.0.0-ci'
 
 jobs:
   rust-test:
@@ -22,54 +27,58 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test
 
-  android-build:
-    name: Android cross-compile smoke test
+  package:
+    name: Package
+    uses: ./.github/workflows/package.yml
+    with:
+      ref: ${{ inputs.ref }}
+      version: ${{ inputs.version || '0.0.0-ci' }}
+
+  # Installs the built AAR into an app through its Maven coordinates and runs
+  # the README quick start and the consumer contract on an emulator.
+  consumer:
+    name: Consumer test (API ${{ matrix.api-level }})
+    needs: package
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [24, 34]
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
-
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk --locked
-
-      - name: Set ANDROID_NDK_HOME
-        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
 
       - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Cross-compile Android targets
-        run: |
-          cargo ndk \
-            -t arm64-v8a \
-            -t armeabi-v7a \
-            -t x86_64 \
-            -o android/jniLibs \
-            build --release
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-aar
+          path: dist-aar
 
-      - name: Generate Kotlin bindings
+      - name: Enable KVM
         run: |
-          cargo run --bin uniffi-bindgen -- generate \
-            --library target/aarch64-linux-android/release/libminigraf_ffi.so \
-            --language kotlin \
-            --out-dir android/src/main/java/
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
 
-      - name: Assemble AAR
-        run: cd android && ./gradlew assembleRelease
+      - name: Run consumer test on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: x86_64
+          target: default
+          disable-animations: true
+          script: bash consumer-test/run.sh local dist-aar ${{ inputs.version || '0.0.0-ci' }}
 
-      # nmcp names the Maven Central deployment "<project.name>-<project.version>.zip",
-      # so project.version (not just the publication version) must carry RELEASE_VERSION.
-      - name: Check project version follows RELEASE_VERSION
-        env:
-          RELEASE_VERSION: 0.0.0-ci
-        run: |
-          cd android
-          ./gradlew -q properties | tee props.txt | grep -x 'version: 0.0.0-ci' \
-            || { grep '^version:' props.txt; echo "::error::project.version does not follow RELEASE_VERSION"; exit 1; }
+  readme-sync:
+    name: README quick start matches the consumer test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - run: python3 -I consumer-test/readme_sync.py README.md consumer-test/tests/quickstart.kt
