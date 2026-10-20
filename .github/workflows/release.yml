@@ -152,6 +152,10 @@ jobs:
         run: |
           cd android && ./gradlew --no-daemon publishReleasePublicationToDistRepository && cd ..
           DIR=io/github/project-minigraf/minigraf-android/$RELEASE_VERSION
+          # Same files, then same bytes. Signing is off in this step; the
+          # publish step adds only the .asc signatures.
+          diff <(ls "tested/$DIR") <(ls "android/build/m2/$DIR") \
+            || { echo "::error::the rebuild publishes a different set of files"; exit 1; }
           for f in tested/$DIR/*; do
             case "$f" in *.md5|*.sha1|*.sha256|*.sha512) continue ;; esac
             cmp "$f" "android/build/m2/$DIR/$(basename "$f")" \
