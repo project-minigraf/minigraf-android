@@ -7,7 +7,7 @@ single-file, embedded bi-temporal graph database with Datalog queries.
 
 ```kotlin
 dependencies {
-    implementation("io.github.project-minigraf:minigraf-android:2.0.8")
+    implementation("io.github.project-minigraf:minigraf-android:2.0.9")
 }
 ```
 
