@@ -64,6 +64,13 @@ writer) here, because `close()` is taken. A record's value is a `MiniGrafValue`
 `Long.MAX_VALUE` means forever. `walCheckpointThreshold = Long.MAX_VALUE` turns off automatic
 checkpoints and the checkpoint on close. Error messages start with their code, such as `[API-015]`.
 
+`OpenOptions(queryMemoryLimit = bytes)` caps the bytes one query may hold, counted per
+entry by the operators that keep state (join build sides, negation and `or` tables,
+distinct sets, aggregate groups, window rows, rule-derived facts). A query that would hold
+more throws `MiniGrafException.Query` with QRY-012 and frees what it held. The default, and
+`Long.MAX_VALUE`, is no limit. Rows a cursor returns are not counted, so read a large
+answer with `query()`.
+
 ## Building from source
 
 Requires Rust stable toolchain, Android NDK, and JDK 17.
