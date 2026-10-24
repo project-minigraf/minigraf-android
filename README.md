@@ -71,6 +71,29 @@ more throws `MiniGrafException.Query` with QRY-012 and frees what it held. The d
 `Long.MAX_VALUE`, is no limit. Rows a cursor returns are not counted, so read a large
 answer with `query()`.
 
+## Prepared queries
+
+`db.prepare(text)` parses a query once; run it with its `$slots` bound (names without
+the `$`). Each run reads the database as it is then, and a prepared query keeps its
+database open until both are closed.
+
+```kotlin
+val pq = db.prepare("(query [:find ?n :where [?e :age \$age] [?e :name ?n]])")
+val thirty = pq.execute("age" to 30)
+pq.query("age" to 40).use { cursor -> /* nextBatch() */ }
+```
+
+`Boolean`, `Byte`/`Short`/`Int`/`Long`, `Float`/`Double`, `String`, `null` and
+`java.util.UUID` (an entity, which also fits value slots as a ref) bind as they are.
+For the other kinds pass a `MiniGrafValue` (`Keyword`, `Ref`, a whole-number `Float64`)
+or a `MiniGrafBindValue` (`Entity`, `TxCount` or `Timestamp` for `:as-of`,
+`AnyValidTime` for `:valid-at`). Any other type throws `IllegalArgumentException`. A
+missing slot is `MiniGrafException.Api` with `[API-022]`, a slot in an attribute
+position `[API-023]`, and a value of the wrong kind `[API-024]`.
+
+Errors are `MiniGrafException.Parse`, `.Query`, `.Storage`, `.Api` (a bad argument, a
+closed object, a bind mistake) or `.Other`.
+
 ## Building from source
 
 Requires Rust stable toolchain, Android NDK, and JDK 17.
