@@ -12,6 +12,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import io.github.project_minigraf.minigraf.MiniGrafDb
 import io.github.project_minigraf.minigraf.MiniGrafException
+import io.github.project_minigraf.minigraf.MiniGrafValue
+import io.github.project_minigraf.minigraf.execute
 
 @RunWith(AndroidJUnit4::class)
 class Contract {
@@ -45,6 +47,21 @@ class Contract {
         assertEquals(listOf("Bob"), names(reopened.execute(query)))
         reopened.close()
         dir.deleteRecursively()
+    }
+
+    @Test
+    fun preparedQueryRunsWithPlainAndTypedValues() {
+        val db = MiniGrafDb.openInMemory()
+        db.execute("""(transact [[:alice :name "Alice"] [:bob :name "Bob"]])""")
+        val pq = db.prepare("(query [:find ?n :where [?e :name \$name] [?e :name ?n]])")
+        for (name in listOf("Alice", "Bob")) {
+            assertEquals(listOf(name), names(pq.execute("name" to name)))
+        }
+        assertEquals(listOf("Alice"), names(pq.execute("name" to MiniGrafValue.Text("Alice"))))
+        val e = assertThrows(MiniGrafException.Api::class.java) { pq.execute() }
+        assertEquals("[API-022]", e.msg.take(9))
+        pq.close()
+        db.close()
     }
 
     @Test
