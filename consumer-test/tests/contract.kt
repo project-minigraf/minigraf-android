@@ -65,6 +65,24 @@ class Contract {
     }
 
     @Test
+    fun setValuesComeBackAndBind() {
+        val db = MiniGrafDb.openInMemory()
+        db.execute("""(transact [[:alice :tags #{1 :k "x"}] [:alice :name "Alice"]])""")
+        val tags = JSONObject(db.execute("(query [:find ?t :where [?e :tags ?t]])"))
+            .getJSONArray("results").getJSONArray(0).getJSONArray(0)
+        assertEquals("""["x",1,":k"]""", tags.toString())
+        val member = db.prepare("(query [:find ?n :where [?e :tags ?t] [(in? 1 \$s)] [?e :name ?n]])")
+        assertEquals(listOf("Alice"), names(member.execute("s" to setOf(1, 2))))
+        val equal = db.prepare("(query [:find ?n :where [?e :tags \$s] [?e :name ?n]])")
+        assertEquals(listOf("Alice"), names(equal.execute("s" to setOf(1, "x", MiniGrafValue.Keyword(":k")))))
+        val e = assertThrows(MiniGrafException.Api::class.java) { member.execute("s" to setOf(setOf(1))) }
+        assertEquals("[API-021]", e.msg.take(9))
+        member.close()
+        equal.close()
+        db.close()
+    }
+
+    @Test
     fun invalidDatalogThrowsMiniGrafException() {
         val db = MiniGrafDb.openInMemory()
         assertThrows(MiniGrafException::class.java) { db.execute("(query [:find") }
