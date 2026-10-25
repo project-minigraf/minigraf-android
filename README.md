@@ -101,6 +101,59 @@ arrays from `execute` and as `MiniGrafValue.Set` in fact records.
 Errors are `MiniGrafException.Parse`, `.Query`, `.Storage`, `.Api` (a bad argument, a
 closed object, a bind mistake) or `.Other`.
 
+## User functions
+
+A predicate implements `MiniGrafPredicate` (`test(value): Boolean`) and is called in
+Datalog as `[(name ?v)]`. An aggregate implements `MiniGrafAggregate`; its
+`accumulator()` returns a new `MiniGrafAccumulator` (`step(value)`, `finish(count)`) for
+each group or window partition, and it is used as `(name ?v)` in `:find` or with
+`:over`. Values arrive as `MiniGrafValue` (`Int64`, `Text`, …, with the value in
+`value`), and `finish` returns one.
+
+```kotlin
+object Adult : MiniGrafPredicate {
+    override fun test(value: MiniGrafValue): Boolean = when (value) {
+        is MiniGrafValue.Int64 -> value.value >= 18
+        else -> throw MiniGrafUdfException.Failed("age is not an integer")
+    }
+}
+
+object Product : MiniGrafAggregate {
+    override fun accumulator(): MiniGrafAccumulator = object : MiniGrafAccumulator {
+        private var product = 1L
+        override fun step(value: MiniGrafValue) { product *= (value as MiniGrafValue.Int64).value }
+        override fun finish(count: Long): MiniGrafValue = MiniGrafValue.Int64(product) // count: values stepped
+    }
+}
+
+db.registerPredicate("adult?", Adult)
+db.registerAggregate("product", Product)
+db.execute("(query [:find ?n :where [?e :age ?a] [(adult? ?a)] [?e :name ?n]])")
+db.execute("(query [:find ?g (product ?a) :where [?e :group ?g] [?e :age ?a]])")
+db.execute("(query [:find ?a (product ?a :over (:order-by ?a)) :where [?e :age ?a]])")
+```
+
+- **Failures.** A callback that throws stops the query with `QRY-014`, raised as
+  `MiniGrafException.Query`; it is never read as `false` or a missing value. Throw
+  `MiniGrafUdfException.Failed(msg)` to choose the message. Any other exception also
+  fails the call, with its first line (class and message, such as
+  `java.lang.IllegalArgumentException: bad`) as the message. A `MiniGrafValue.Ref` from
+  `finish` whose value is not a UUID is a failing call too.
+- **Lifecycle.** The database keeps a strong reference to each registered object until
+  the database and every cursor and prepared query opened from it are closed. There is
+  no unregister. Predicates and aggregates have separate names, and registering a name
+  twice in either is an error (`INT-040`). A query sees the functions registered when it
+  opened; a prepared query, those registered when each run starts.
+- **Threading.** A callback runs on the thread that calls `execute` (of the database or
+  a prepared query) or a cursor's `nextBatch`, including a prepared query's cursor.
+  Queries on different threads may call the same object at once, so it must be
+  thread-safe. One accumulator is used by one query on one thread at a time. Keep
+  callbacks short: a query on the main thread blocks it for as long as they run.
+- **Cost.** Each call crosses the FFI once: one JNA call per value.
+- **Re-entry.** A callback may query the same database, open a cursor or register another
+  function. Inside a write transaction, the calls the core refuses there still return
+  `INT-001`.
+
 ## Building from source
 
 Requires Rust stable toolchain, Android NDK, and JDK 17.
