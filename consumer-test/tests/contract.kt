@@ -1,5 +1,6 @@
 // The consumer contract every binding checks (spec §4): in memory, file-backed
-// across a reopen, and the error type for invalid Datalog.
+// across a reopen, prepared queries, set values, user functions, and the error
+// type for invalid Datalog.
 package io.github.project_minigraf.consumer
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -8,10 +9,14 @@ import java.io.File
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import io.github.project_minigraf.minigraf.MiniGrafAccumulator
+import io.github.project_minigraf.minigraf.MiniGrafAggregate
 import io.github.project_minigraf.minigraf.MiniGrafDb
 import io.github.project_minigraf.minigraf.MiniGrafException
+import io.github.project_minigraf.minigraf.MiniGrafPredicate
 import io.github.project_minigraf.minigraf.MiniGrafValue
 import io.github.project_minigraf.minigraf.execute
 
@@ -79,6 +84,37 @@ class Contract {
         assertEquals("[API-021]", e.msg.take(9))
         member.close()
         equal.close()
+        db.close()
+    }
+
+    @Test
+    fun userPredicateAndAggregate() {
+        val db = MiniGrafDb.openInMemory()
+        db.execute("""(transact [[:alice :name "Alice"] [:alice :age 30] [:bob :name "Bob"] [:bob :age 12]])""")
+        db.registerPredicate("adult?", object : MiniGrafPredicate {
+            override fun test(value: MiniGrafValue): Boolean = (value as MiniGrafValue.Int64).value >= 18
+        })
+        db.registerAggregate("product", object : MiniGrafAggregate {
+            override fun accumulator(): MiniGrafAccumulator = object : MiniGrafAccumulator {
+                private var product = 1L
+                override fun step(value: MiniGrafValue) {
+                    val n = (value as MiniGrafValue.Int64).value
+                    if (n == 0L) throw IllegalArgumentException("zero")
+                    product *= n
+                }
+                override fun finish(count: Long): MiniGrafValue = MiniGrafValue.Int64(product)
+            }
+        })
+        assertEquals(listOf("Alice"), names(db.execute("(query [:find ?n :where [?e :age ?a] [(adult? ?a)] [?e :name ?n]])")))
+        val product = JSONObject(db.execute("(query [:find (product ?a) :where [?e :age ?a]])"))
+            .getJSONArray("results").getJSONArray(0).getLong(0)
+        assertEquals(360L, product)
+        db.execute("(transact [[:carol :age 0]])")
+        val e = assertThrows(MiniGrafException.Query::class.java) {
+            db.execute("(query [:find (product ?a) :where [?e :age ?a]])")
+        }
+        assertEquals("[QRY-014]", e.msg.take(9))
+        assertTrue(e.msg.contains("zero"))
         db.close()
     }
 
