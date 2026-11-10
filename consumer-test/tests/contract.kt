@@ -18,6 +18,9 @@ import io.github.project_minigraf.minigraf.MiniGrafDb
 import io.github.project_minigraf.minigraf.MiniGrafException
 import io.github.project_minigraf.minigraf.MiniGrafPredicate
 import io.github.project_minigraf.minigraf.MiniGrafValue
+import io.github.project_minigraf.minigraf.OVERRIDABLE_DEFAULTS
+import io.github.project_minigraf.minigraf.OpenOptions
+import io.github.project_minigraf.minigraf.Overridable
 import io.github.project_minigraf.minigraf.execute
 
 @RunWith(AndroidJUnit4::class)
@@ -116,6 +119,44 @@ class Contract {
         assertEquals("[QRY-014]", e.msg.take(9))
         assertTrue(e.msg.contains("zero"))
         db.close()
+    }
+
+    // minigraf#872: the override list, the new open options and the prepared setters.
+    @Test
+    fun overridesOptionsAndSetters() {
+        assertEquals(
+            listOf(Overridable.MAX_DERIVED_FACTS, Overridable.MAX_RESULTS, Overridable.MAX_ITERATIONS),
+            OVERRIDABLE_DEFAULTS,
+        )
+        val cache = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
+        val dir = File(cache, "overrides-${System.nanoTime()}").apply { mkdirs() }
+        val options = OpenOptions(
+            allowOverrides = listOf(Overridable.QUERY_MEMORY_LIMIT),
+            transactionChunkFacts = 2,
+            maxIterations = 1_000,
+        )
+        val db = MiniGrafDb.openWithOptions(File(dir, "o.graph").path, options)
+        db.execute("(transact [[:a :edge :b] [:b :edge :c] [:c :edge :d] [:d :edge :e]])")
+        db.execute("(rule [(reach ?x ?y) [?x :edge ?y]])")
+        db.execute("(rule [(reach ?x ?y) [?x :edge ?z] (reach ?z ?y)])")
+        val reach = "(query [:find ?x ?y :where (reach ?x ?y)])"
+        val e = assertThrows(MiniGrafException.Api::class.java) {
+            db.execute("(query [:find ?x ?y :where (reach ?x ?y) :max-derived-facts 100])")
+        }
+        assertEquals("[API-025]", e.msg.take(9))
+        val rows = { json: String -> JSONObject(json).getJSONArray("results").length() }
+        assertEquals(10, rows(db.execute("(query [:find ?x ?y :where (reach ?x ?y) :query-memory-limit 1000000])")))
+
+        val pq = db.prepare(reach)
+        val derived = pq.withMaxIterations(1)
+        val limited = assertThrows(MiniGrafException.Other::class.java) { derived.execute() }
+        assertEquals("[INT-020]", limited.msg.take(9))
+        assertEquals(10, rows(pq.execute()))
+        assertEquals(10, rows(derived.withMaxIterations(Long.MAX_VALUE).execute()))
+        derived.close()
+        pq.close()
+        db.close()
+        dir.deleteRecursively()
     }
 
     @Test

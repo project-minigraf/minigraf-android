@@ -71,6 +71,26 @@ more throws `MiniGrafException.Query` with QRY-012 and frees what it held. The d
 `Long.MAX_VALUE`, is no limit. Rows a cursor returns are not counted, so read a large
 answer with `query()`.
 
+Query text may override some settings with keywords such as `:max-derived-facts 1000`.
+`OpenOptions(allowOverrides = ...)` lists the `Overridable` keywords it may use
+(`MAX_DERIVED_FACTS`, `MAX_RESULTS`, `QUERY_MEMORY_LIMIT`, `MAX_ITERATIONS`). Left `null`,
+the defaults apply: `OVERRIDABLE_DEFAULTS`, read from the core library (today
+`MAX_DERIVED_FACTS`, `MAX_RESULTS` and `MAX_ITERATIONS`). A list replaces the defaults, it
+does not add to them, and `emptyList()` refuses every keyword: a query that uses one
+throws `MiniGrafException.Api` with `[API-025]` from `execute`, `query` and `prepare`.
+
+```kotlin
+val db = MiniGrafDb.openWithOptions(path, OpenOptions(
+    allowOverrides = OVERRIDABLE_DEFAULTS + Overridable.QUERY_MEMORY_LIMIT,
+    maxIterations = 10_000,          // rounds per stratum of a rule query, else INT-020
+    transactionChunkFacts = 16_384,  // facts staged before a large transaction is chunked
+))
+```
+
+`maxIterations` defaults to 1,000,000 and `Long.MAX_VALUE` is no limit;
+`transactionChunkFacts` defaults to 65,536 and is clamped to 1..=1,000,000. A negative
+count is `[API-017]`.
+
 ## Prepared queries
 
 `db.prepare(text)` parses a query once; run it with its `$slots` bound (names without
@@ -100,6 +120,19 @@ arrays from `execute` and as `MiniGrafValue.Set` in fact records.
 
 Errors are `MiniGrafException.Parse`, `.Query`, `.Storage`, `.Api` (a bad argument, a
 closed object, a bind mistake) or `.Other`.
+
+`withMaxDerivedFacts(n)`, `withQueryMemoryLimit(bytes)` and `withMaxIterations(n)` each
+return a new prepared query with that limit; the one they are called on is unchanged.
+They are application code, so `allowOverrides` does not apply to them, and an allowed
+keyword in the query text still overrides them. `Long.MAX_VALUE` means no limit and a
+negative value is `[API-017]`. A derived query keeps its database open, as any prepared
+query does.
+
+```kotlin
+val reach = db.prepare("(query [:find ?x ?y :where (reach ?x ?y)])")
+val small = reach.withMaxDerivedFacts(10_000).withQueryMemoryLimit(16L shl 20)
+small.execute()  // INT-020 or QRY-012 past a limit; reach is unchanged
+```
 
 ## User functions
 
