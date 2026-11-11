@@ -8,6 +8,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,6 +22,8 @@ import io.github.project_minigraf.minigraf.MiniGrafValue
 import io.github.project_minigraf.minigraf.OVERRIDABLE_DEFAULTS
 import io.github.project_minigraf.minigraf.OpenOptions
 import io.github.project_minigraf.minigraf.Overridable
+import io.github.project_minigraf.minigraf.TxOptions
+import io.github.project_minigraf.minigraf.beginWrite
 import io.github.project_minigraf.minigraf.execute
 
 @RunWith(AndroidJUnit4::class)
@@ -156,6 +159,36 @@ class Contract {
         derived.close()
         pq.close()
         db.close()
+        dir.deleteRecursively()
+    }
+
+    // minigraf#824: write transactions through the built AAR.
+    @Test
+    fun writeTransactions() {
+        val cache = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
+        val dir = File(cache, "tx-${System.nanoTime()}").apply { mkdirs() }
+        val path = File(dir, "tx.graph").path
+        val names = "(query [:find ?n :where [?e :name ?n]])"
+        val db = MiniGrafDb.open(path)
+        db.execute("(transact [[:alice :name \"Alice\"]])")
+        val tx = db.beginWrite(TxOptions(chunkFacts = 1000))
+        tx.execute("(transact [[:bob :name \"Bob\"]])")
+        assertTrue("the transaction reads its own write", tx.execute(names).contains("Bob"))
+        tx.commit()
+        val finished = assertThrows(MiniGrafException.Api::class.java) { tx.execute(names) }
+        assertEquals("[API-018]", finished.msg.take(9))
+        tx.close()
+        assertThrows(IllegalStateException::class.java) {
+            db.beginWrite().use { t ->
+                t.execute("(transact [[:carol :name \"Carol\"]])")
+                throw IllegalStateException("leave the block")
+            }
+        }
+        assertFalse("an exception rolls back", db.execute(names).contains("Carol"))
+        db.close()
+        val again = MiniGrafDb.open(path)
+        assertTrue("the commit survives reopen", again.execute(names).contains("Bob"))
+        again.close()
         dir.deleteRecursively()
     }
 
