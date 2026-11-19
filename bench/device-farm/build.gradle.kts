@@ -13,7 +13,7 @@ android {
         versionCode = 1
         versionName = "839-source"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        ndk { abiFilters += "arm64-v8a" }
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
     // Measure optimized, non-debuggable application code. The local debug key
     // is only an installation key for this unpublished benchmark app.
@@ -24,6 +24,7 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+    packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += "**/libminigraf_ffi.so" } }
     testBuildType = "release"
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

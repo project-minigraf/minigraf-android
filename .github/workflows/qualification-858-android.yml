@@ -1,0 +1,163 @@
+name: Android qualification 858 (experimental artifacts only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      core-ref:
+        description: Full lowercase core commit SHA pinned before qualification
+        required: true
+        type: string
+      schedule:
+        description: Pre-registered order B1,V,B2 repeated six times
+        required: true
+        type: string
+        default: B1,V,B2
+      collect:
+        description: Collect experimental timings (false runs build and correctness only)
+        required: true
+        type: boolean
+        default: false
+  push:
+    branches: [feat/858-qualification]
+    paths: [bench/device-farm/qualification/run-config.json]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qualification-858-android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  qualification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      CARGO_BUILD_JOBS: '2'
+      ANDROID_NDK_VERSION: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: binding
+      - name: Resolve dispatch inputs or committed push configuration
+        id: config
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_CORE: ${{ inputs.core-ref }}
+          INPUT_SCHEDULE: ${{ inputs.schedule }}
+          INPUT_COLLECT: ${{ inputs.collect }}
+        run: |
+          mkdir qualification-evidence
+          python3 - <<'PY'
+          import json, os, pathlib, sys
+          sys.path.insert(0, 'binding/bench/device-farm/qualification')
+          from run_emulator import resolve_config
+          config = resolve_config(json.loads(pathlib.Path('binding/bench/device-farm/qualification/run-config.json').read_text()),
+              os.environ['EVENT'], dict(core_ref=os.environ['INPUT_CORE'], schedule=os.environ['INPUT_SCHEDULE'], collect=os.environ['INPUT_COLLECT']))
+          pathlib.Path('qualification-evidence/resolved-config.json').write_text(json.dumps(config, indent=2)+'\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write('core-ref='+config['core_ref']+'\n')
+          PY
+      - uses: actions/checkout@v4
+        with:
+          repository: project-minigraf/minigraf
+          ref: ${{ steps.config.outputs.core-ref }}
+          path: core
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          targets: aarch64-linux-android,x86_64-linux-android
+      - name: Install build tools and resolve exact emulator and system image versions before timing
+        run: |
+          sdkmanager 'platforms;android-34' 'build-tools;34.0.0' "ndk;$ANDROID_NDK_VERSION" \
+            'emulator' 'system-images;android-34;google_apis;x86_64'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          cargo install cargo-ndk --version 3.5.4 --locked
+          cp "$ANDROID_HOME/emulator/source.properties" qualification-evidence/emulator-source.properties
+          cp "$ANDROID_HOME/system-images/android-34/google_apis/x86_64/source.properties" qualification-evidence/system-image-source.properties
+          "$ANDROID_HOME/emulator/emulator" -version > qualification-evidence/emulator-version.txt 2>&1
+          printf 'no\n' | avdmanager create avd --force --name minigraf858 \
+            --package 'system-images;android-34;google_apis;x86_64' --device pixel_7
+          python3 - <<'PY'
+          from datetime import datetime, timezone
+          import json, os, pathlib, platform
+          keys = ('ImageOS', 'ImageVersion', 'RUNNER_OS', 'RUNNER_ARCH', 'GITHUB_SHA', 'GITHUB_WORKFLOW_SHA')
+          record = {key: os.environ.get(key, 'unavailable') for key in keys}
+          record.update(started_utc=datetime.now(timezone.utc).isoformat(), host_arch=platform.machine(),
+              host_kernel=platform.release(), runs_per_set=6, retries_per_slot=2,
+              queue_seconds='unavailable from runner; retain Actions timestamps separately')
+          pathlib.Path('qualification-evidence/host.json').write_text(json.dumps(record, indent=2)+'\n')
+          PY
+      - name: Enable KVM (availability is not proof of active acceleration)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm > qualification-evidence/kvm-presence.txt 2>&1
+          "$ANDROID_HOME/emulator/emulator" -accel-check > qualification-evidence/accel-check.txt 2>&1
+      - name: Verify parser and collection controls
+        run: python3 -m unittest discover -s binding/bench/device-farm/qualification -p 'test_*.py'
+      - name: Build both ABIs once and run only harness JVM tests
+        env:
+          CORE_REF: ${{ steps.config.outputs.core-ref }}
+        run: |
+          start=$SECONDS
+          set +e
+          bash binding/bench/device-farm/build.sh core "$CORE_REF" 2>&1 | tee qualification-evidence/build.log
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "$((SECONDS-start))" > qualification-evidence/build-seconds.txt
+          exit "$status"
+      - name: Cold boot, correctness smoke, then opt-in fresh-process collection
+        run: |
+          app_apks=(binding/bench/device-farm/build/outputs/apk/release/*.apk)
+          test_apks=(binding/bench/device-farm/build/outputs/apk/androidTest/release/*.apk)
+          [[ ${#app_apks[@]} == 1 && ${#test_apks[@]} == 1 ]]
+          start=$SECONDS
+          set +e
+          python3 binding/bench/device-farm/qualification/run_emulator.py \
+            --config qualification-evidence/resolved-config.json \
+            --build binding/bench/device-farm/build/evidence/build.json \
+            --app "${app_apks[0]}" \
+            --test-apk "${test_apks[0]}" \
+            --output qualification-evidence/runs 2>&1 | tee qualification-evidence/collection.log
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "$((SECONDS-start))" > qualification-evidence/collection-seconds.txt
+          exit "$status"
+      - name: Checksum every retained artifact including failed attempts
+        if: always()
+        run: |
+          mkdir -p qualification-evidence
+          python3 - <<'PY'
+          import hashlib, pathlib
+          roots = [pathlib.Path(p) for p in ('qualification-evidence',
+              'binding/bench/device-farm/build/evidence', 'binding/bench/device-farm/build/outputs/apk',
+              'binding/bench/device-farm/build/test-results', 'binding/bench/device-farm/build/reports/tests')]
+          out = pathlib.Path('qualification-evidence/SHA256SUMS')
+          with out.open('w') as result:
+              for path in sorted(p for root in roots for p in root.rglob('*') if p.is_file() and p != out):
+                  digest = hashlib.sha256()
+                  with path.open('rb') as source:
+                      for chunk in iter(lambda: source.read(1024*1024), b''):
+                          digest.update(chunk)
+                  result.write(f'{digest.hexdigest()}  {path.as_posix()}\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qualification-858-android-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            qualification-evidence/
+            binding/bench/device-farm/build/evidence/
+            binding/bench/device-farm/build/outputs/apk/
+            binding/bench/device-farm/build/test-results/
+            binding/bench/device-farm/build/reports/tests/
+          if-no-files-found: error
+          retention-days: 90

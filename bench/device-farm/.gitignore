@@ -1,5 +1,5 @@
-/.gradle/
-/build/
-/libs/
-/src/main/assets/build.json
-/local.properties
+build/
+.gradle/
+libs/
+__pycache__/
+src/main/assets/build.json

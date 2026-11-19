@@ -7,6 +7,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.project_minigraf.minigraf.*
 import java.io.File
+import java.security.MessageDigest
+import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Test
@@ -24,6 +26,8 @@ class BenchmarkTest {
     } + "])"
     private val output = File(context.getExternalFilesDir(null), "minigraf-bench.jsonl")
     private var timed = false
+    private var doubleWork = false
+    private val runId = UUID.randomUUID().toString()
     private val completed = mutableListOf<String>()
 
     private fun emit(record: JSONObject) {
@@ -93,6 +97,8 @@ class BenchmarkTest {
     ) {
         val id = "binding/android/$name"
         fun invoke(): Long {
+            if (doubleWork) return QualificationWork.invoke(setup, action, validate, teardown,
+                SystemClock::elapsedRealtimeNanos)
             val state = setup()
             try {
                 val start = if (timed) SystemClock.elapsedRealtimeNanos() else 0L
@@ -119,19 +125,89 @@ class BenchmarkTest {
     private fun <T> memory(name: String, action: () -> T, validate: (T) -> Unit) =
         measure(name, setup = { Unit }, action = { action() }, validate = validate)
 
+    // Do not discover all tests for correctness: explicitly select this method.
     @Test fun verifyAndMeasure() {
-        val mode = InstrumentationRegistry.getArguments().getString("mode", "smoke")
+        val mode = InstrumentationRegistry.getArguments().getString("mode", "smoke")!!
         require(mode == "smoke" || mode == "benchmark") { "mode must be smoke or benchmark" }
-        timed = mode == "benchmark"
+        runSuite(mode)
+    }
+
+    @Test fun testQualificationBaseline() = runSuite("qualification")
+
+    @Test fun testQualificationSlowdown() {
+        doubleWork = true // sole source switch; never enabled in production or #839
+        runSuite("qualification")
+    }
+
+    private fun property(name: String): String {
+        val process = ProcessBuilder("/system/bin/getprop", name).start()
+        val value = process.inputStream.bufferedReader().use { it.readText().trim() }
+        check(process.waitFor() == 0) { "cannot read runtime property $name" }
+        return value
+    }
+
+    private fun runtimeIdentity(build: JSONObject): JSONObject {
+        // Force UniFFI/JNA to load the actual library, then inspect its mapping.
+        MiniGrafDb.openInMemory().use { }
+        val library = File(context.applicationInfo.nativeLibraryDir, "libminigraf_ffi.so").canonicalFile
+        val mapped = File("/proc/self/maps").readLines().mapNotNull { line ->
+            line.trim().split(Regex("\\s+"), limit = 6).getOrNull(5)
+        }.filter { it.endsWith("/libminigraf_ffi.so") }.toSet()
+        require(mapped.size == 1 && File(mapped.single()).canonicalFile == library) {
+            "cannot prove loaded native library from /proc/self/maps; require extracted JNI packaging"
+        }
+        val abi = library.inputStream().use { input ->
+            val header = ByteArray(64)
+            require(input.read(header) == header.size)
+            PlatformIdentity.elfAbi(header)
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+        library.inputStream().use { input ->
+            val buffer = ByteArray(65536)
+            while (true) { val n = input.read(buffer); if (n < 0) break; digest.update(buffer, 0, n) }
+        }
+        val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+        require(hash == build.getJSONObject("native_artifacts").getJSONObject(abi).getString("sha256")) {
+            "loaded native library hash differs from build manifest for $abi"
+        }
+        val qemu = property("ro.kernel.qemu")
+        val bootQemu = property("ro.boot.qemu")
+        val platform = PlatformIdentity.classify(Build.FINGERPRINT, Build.HARDWARE, Build.PRODUCT,
+            qemu, bootQemu, Build.SUPPORTED_ABIS.toList(), Build.MODEL, Build.VERSION.SDK_INT, abi)
+        return JSONObject().put("type", "runtime").put("platform", platform)
+            .put("fingerprint", Build.FINGERPRINT).put("hardware", Build.HARDWARE).put("product", Build.PRODUCT)
+            .put("ro_kernel_qemu", qemu).put("ro_boot_qemu", bootQemu)
+            .put("abis", JSONArray(Build.SUPPORTED_ABIS.toList())).put("loaded_abi", abi)
+            .put("native_sha256", hash).put("native_identity", "proc-maps-extracted-elf")
+            .put("model", Build.MODEL).put("sdk", Build.VERSION.SDK_INT).put("os", Build.VERSION.RELEASE)
+    }
+
+    private fun runSuite(mode: String) {
+        timed = mode != "smoke"
+        val variant = if (doubleWork) "slowdown" else "baseline"
         output.writeText("")
         completed.clear()
         val build = context.assets.open("build.json").bufferedReader().use { JSONObject(it.readText()) }
-        emit(JSONObject().put("type", "environment").put("mode", mode).put("build", build)
+        val runtime = runtimeIdentity(build)
+        val platform = runtime.getString("platform")
+        require(platform != "unknown") { "ambiguous platform identity: $runtime" }
+        require(mode != "benchmark" || platform == "physical") {
+            "#839 release-evidence benchmark requires physical identity; use qualification methods on emulators"
+        }
+        emit(JSONObject().put("type", "environment").put("mode", mode).put("variant", variant)
+            .put("platform", platform).put("double_work", doubleWork).put("run_id", runId)
+            .put("profile", build.getString("profile")).put("build", build)
+            .put("hardware", runtime.getString("hardware")).put("product", runtime.getString("product"))
+            .put("ro_kernel_qemu", runtime.getString("ro_kernel_qemu"))
+            .put("ro_boot_qemu", runtime.getString("ro_boot_qemu"))
+            .put("loaded_abi", runtime.getString("loaded_abi"))
+            .put("native_sha256", runtime.getString("native_sha256")).put("os", Build.VERSION.RELEASE)
             .put("manufacturer", Build.MANUFACTURER).put("model", Build.MODEL)
             .put("fingerprint", Build.FINGERPRINT).put("sdk", Build.VERSION.SDK_INT)
             .put("abis", JSONArray(Build.SUPPORTED_ABIS.toList()))
             .put("vm", System.getProperty("java.vm.version"))
             .put("storage", "targetContext.filesDir").put("rss_verified", false))
+        emit(runtime)
 
         val dir = File(context.filesDir, "bench-839-${System.nanoTime()}")
         check(dir.mkdirs())
@@ -194,10 +270,17 @@ class BenchmarkTest {
 
                 val seed = File(dir, "seed.graph")
                 MiniGrafDb.open(seed.path).use { it.execute(transaction); it.checkpoint() }
-                memory("options_readonly_open/1k", {
-                    MiniGrafDb.openWithOptions(seed.path, OpenOptions(readOnly = true,
+                val secondSeed = File(dir, "seed-second.graph")
+                if (doubleWork) MiniGrafDb.open(secondSeed.path).use { it.execute(transaction); it.checkpoint() }
+                var seedIndex = 0
+                measure("options_readonly_open/1k", setup = {
+                    if (doubleWork && seedIndex++ % 2 == 1) secondSeed else seed
+                }, action = { file ->
+                    MiniGrafDb.openWithOptions(file.path, OpenOptions(readOnly = true,
                         pageCacheSize = 64, queryMemoryLimit = 16L * 1024 * 1024))
-                }) { opened -> opened.use { ResultChecks.numbers(result(it.execute(scalarQuery)), expected) } }
+                }, validate = { opened -> opened.use {
+                    ResultChecks.numbers(result(it.execute(scalarQuery)), expected)
+                } })
 
                 measure("file_transact/1k", iterations = 1,
                     setup = {
@@ -232,10 +315,13 @@ class BenchmarkTest {
                     })
             }
             require(completed.size == 14 && completed.toSet().size == 14)
-            emit(JSONObject().put("type", "complete").put("mode", mode)
-                .put("ids", JSONArray(completed)).put("count", completed.size))
+
         } finally {
             check(dir.deleteRecursively()) { "scratch cleanup failed" }
         }
+        // A completion record certifies every validation AND teardown succeeded.
+        emit(JSONObject().put("type", "complete").put("mode", mode).put("variant", variant)
+            .put("platform", platform).put("run_id", runId)
+            .put("ids", JSONArray(completed)).put("count", completed.size))
     }
 }
