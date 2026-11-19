@@ -90,7 +90,8 @@ jobs:
           cp "$ANDROID_HOME/emulator/source.properties" qualification-evidence/emulator-source.properties
           cp "$ANDROID_HOME/system-images/android-34/google_apis/x86_64/source.properties" qualification-evidence/system-image-source.properties
           "$ANDROID_HOME/emulator/emulator" -version > qualification-evidence/emulator-version.txt 2>&1
-          printf 'no\n' | avdmanager create avd --force --name minigraf858 \
+          ls -l "$ANDROID_HOME/cmdline-tools/" "$ANDROID_HOME/cmdline-tools/latest/bin"
+          printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name minigraf858 \
             --package 'system-images;android-34;google_apis;x86_64' --device pixel_7
           python3 - <<'PY'
           from datetime import datetime, timezone
