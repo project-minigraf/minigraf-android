@@ -87,6 +87,7 @@ jobs:
           ls "$ANDROID_HOME" "$ANDROID_HOME/emulator" | head -40
           test -x "$ANDROID_HOME/emulator/emulator"
           cargo install cargo-ndk --version 3.5.4 --locked
+          sudo apt-get update -qq && sudo apt-get install -y -qq libpulse0 libnss3 libxcomposite1 libxcursor1 libxi6 libxtst6 libasound2t64
           cp "$ANDROID_HOME/emulator/source.properties" qualification-evidence/emulator-source.properties
           cp "$ANDROID_HOME/system-images/android-34/google_apis/x86_64/source.properties" qualification-evidence/system-image-source.properties
           "$ANDROID_HOME/emulator/emulator" -version > qualification-evidence/emulator-version.txt 2>&1
