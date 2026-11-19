@@ -80,9 +80,12 @@ jobs:
           targets: aarch64-linux-android,x86_64-linux-android
       - name: Install build tools and resolve exact emulator and system image versions before timing
         run: |
-          sdkmanager 'platforms;android-34' 'build-tools;34.0.0' "ndk;$ANDROID_NDK_VERSION" \
+          echo "ANDROID_HOME=$ANDROID_HOME ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-unset}"
+          sdkmanager --sdk_root="$ANDROID_HOME" 'platforms;android-34' 'build-tools;34.0.0' "ndk;$ANDROID_NDK_VERSION" \
             'emulator' 'system-images;android-34;google_apis;x86_64'
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          ls "$ANDROID_HOME" "$ANDROID_HOME/emulator" | head -40
+          test -x "$ANDROID_HOME/emulator/emulator"
           cargo install cargo-ndk --version 3.5.4 --locked
           cp "$ANDROID_HOME/emulator/source.properties" qualification-evidence/emulator-source.properties
           cp "$ANDROID_HOME/system-images/android-34/google_apis/x86_64/source.properties" qualification-evidence/system-image-source.properties
