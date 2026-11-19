@@ -92,8 +92,14 @@ jobs:
           cp "$ANDROID_HOME/system-images/android-34/google_apis/x86_64/source.properties" qualification-evidence/system-image-source.properties
           "$ANDROID_HOME/emulator/emulator" -version > qualification-evidence/emulator-version.txt 2>&1
           ls -l "$ANDROID_HOME/cmdline-tools/" "$ANDROID_HOME/cmdline-tools/latest/bin"
-          printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name minigraf858 \
-            --package 'system-images;android-34;google_apis;x86_64' --device pixel_7
+          set -o pipefail
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" --verbose create avd --force --name minigraf858 \
+            --package 'system-images;android-34;google_apis;x86_64' --device pixel_7 2>&1 | tee qualification-evidence/avdmanager-create.txt
+          "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" list avd 2>&1 | tee qualification-evidence/avd-list.txt
+          grep -q 'Name: minigraf858' qualification-evidence/avd-list.txt
           python3 - <<'PY'
           from datetime import datetime, timezone
           import json, os, pathlib, platform
