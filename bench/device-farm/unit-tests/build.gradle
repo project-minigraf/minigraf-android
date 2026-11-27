@@ -1,0 +1,28 @@
+// SDK-free runner for the exact same pure harness tests as testReleaseUnitTest.
+// Uses Gradle's bundled Kotlin compiler and JUnit, with no network dependencies.
+plugins { id 'java' }
+repositories { }
+def bundled = fileTree(new File(gradle.gradleHomeDir, 'lib')) { include '*.jar' }
+def output = layout.buildDirectory.dir('classes/kotlin/test')
+tasks.register('compileHarness', JavaExec) {
+    classpath = bundled
+    mainClass = 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler'
+    def sources = fileTree('../src/main/java') { include '**/*.kt' } +
+                  fileTree('../src/test/java') { include '**/ResultChecksTest.kt' }
+    inputs.files(sources)
+    outputs.dir(output)
+    doFirst {
+        output.get().asFile.mkdirs()
+        args = ['-no-stdlib', '-no-reflect', '-jvm-target', '17',
+                '-classpath', bundled.asPath, '-d', output.get().asFile.path] + sources.files*.path
+    }
+    maxHeapSize = '512m'
+}
+test {
+    dependsOn 'compileHarness'
+    testClassesDirs = files(output)
+    classpath = files(output) + bundled
+    include '**/ResultChecksTest.class'
+    maxParallelForks = 1
+    maxHeapSize = '512m'
+}
